@@ -2,9 +2,20 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 
+// ============================================================
+// GameManager
+// Core game loop, state machine, and player stats tracker.
+// ============================================================
 public class GameManager : MonoBehaviour
 {
     public static GameManager Instance { get; private set; }
+
+    // ----------------------------------------------------------
+    // Inspector settings
+    // ----------------------------------------------------------
+    [Header("Level Layout")]
+    public Vector3 PlayerSpawnPosition = new Vector3(0f, 0f, 0f); 
+    public Vector3 GoalPosition        = new Vector3(60f, -3f, 0f);
 
     [Header("Player Stats")]
     public int   startingLives = 3;
@@ -15,19 +26,31 @@ public class GameManager : MonoBehaviour
     [Tooltip("Brief invincibility granted after taking damage (no position reset).")]
     public float damageInvincibilityTime = 1.5f;
 
-    public int       Lives         { get; private set; }
-    public float     TimeRemaining { get; private set; }
-    public bool      IsInvincible  { get; private set; }
-    public bool      HasFireball   { get; private set; }
-    public bool      IsFacingRight { get; set; } = true;
-    public GameState CurrentState  { get; private set; } = GameState.Playing;
+    // ----------------------------------------------------------
+    // Public read-only state
+    // ----------------------------------------------------------
+    public int       Lives               { get; private set; }
+    public float     TimeRemaining       { get; private set; }
+    public bool      IsInvincible        { get; private set; }
+    public bool      IsPowerupInvincible { get; private set; } 
+    public bool      HasFireball         { get; private set; }
+    public bool      IsFacingRight       { get; set; } = true;
+    public GameState CurrentState        { get; private set; } = GameState.Playing;
+
+    // Properties for GameRenderer to read
+    public bool      IsShowingExtraLifeEffect   => _extraLifeTimer > 0f;
+    public float     InvincibilityTimeRemaining => _invincibilityTimer;
 
     [Header("Fireball")]
     [Tooltip("Minimum seconds between fireball shots.")]
     public float fireballCooldown = 0.35f;
 
+    // ----------------------------------------------------------
+    // Private state
+    // ----------------------------------------------------------
     private float _invincibilityTimer;
     private float _fireballCooldownTimer;
+    private float _extraLifeTimer; 
     private EntityManager    _entityManager;
     private PlayerController _playerController;
 
@@ -61,11 +84,17 @@ public class GameManager : MonoBehaviour
             {
                 gm._invincibilityTimer -= Time.deltaTime;
                 if (gm._invincibilityTimer <= 0f)
+                {
                     gm.IsInvincible = false;
+                    gm.IsPowerupInvincible = false; 
+                }
             }
 
             if (gm._fireballCooldownTimer > 0f)
                 gm._fireballCooldownTimer -= Time.deltaTime;
+
+            if (gm._extraLifeTimer > 0f)
+                gm._extraLifeTimer -= Time.deltaTime;
         }
         public void OnExit(GameManager gm) { }
     }
@@ -76,6 +105,7 @@ public class GameManager : MonoBehaviour
         {
             gm.CurrentState = GameState.GameOver;
             Debug.Log("[State] GAME OVER  |  R = restart   ESC = quit");
+            gm._playerController.TriggerDeathAnimation();
         }
         public void OnUpdate(GameManager gm)
         {
@@ -155,26 +185,25 @@ public class GameManager : MonoBehaviour
         _stateObj?.OnUpdate(this);
     }
 
-    // One hit = one life lost. No HP layer.
+    // ----------------------------------------------------------
+    // Combat & Damage
+    // ----------------------------------------------------------
+    
     public void TakeDamage()
     {
         if (IsInvincible)                      return;
         if (CurrentState != GameState.Playing) return;
 
-        HasFireball = false;
+        HasFireball = false; 
         Lives--;
         Debug.Log($"[GameManager] Hit! Lives remaining: {Lives}");
 
         if (Lives <= 0)
             TransitionTo(new GameOverState());
         else
-        {
-            _playerController.Respawn();
             GrantDamageInvincibility();
-        }
     }
 
-    // Instakill BYPASSES invincibility - spikes and pits always kill
     public void InstantKill()
     {
         if (CurrentState != GameState.Playing) return;
@@ -194,7 +223,7 @@ public class GameManager : MonoBehaviour
 
     private void GrantDamageInvincibility()
     {
-        IsInvincible       = true;
+        IsInvincible = true;
         _invincibilityTimer = Mathf.Max(_invincibilityTimer, damageInvincibilityTime);
     }
 
@@ -202,6 +231,7 @@ public class GameManager : MonoBehaviour
     public void AddLife()
     {
         Lives++;
+        _extraLifeTimer = 0.4f; 
         Debug.Log($"[GameManager] Extra life! Lives: {Lives}");
     }
 
@@ -209,11 +239,11 @@ public class GameManager : MonoBehaviour
 
     public void CollectInvincibility()
     {
-        IsInvincible       = true;
+        IsInvincible        = true;
+        IsPowerupInvincible = true; 
         _invincibilityTimer = invincibilityDuration;
     }
 
-    // HasFireball is NEVER cleared here - infinite shots until player is hit
     public void UseFireball()
     {
         if (!HasFireball)                       return;
@@ -236,4 +266,4 @@ public class GameManager : MonoBehaviour
         if (CurrentState == GameState.Playing)
             TransitionTo(new GameOverState());
     }
-}
+}   

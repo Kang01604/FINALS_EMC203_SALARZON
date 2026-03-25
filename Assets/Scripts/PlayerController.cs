@@ -56,8 +56,9 @@ public class PlayerController : MonoBehaviour
     public float playerHeight = 1f;
     public float playerDepth  = 0.5f;
 
-    [Header("Spawn")]
-    public Vector3 spawnPosition = new Vector3(0f, 0f, 0f);
+    [Header("Level Boundaries")]
+    [Tooltip("Keep the player within the Start and Goal dynamically.")]
+    public bool  useLevelBounds = true;
 
     // ----------------------------------------------------------
     // Public read-only state
@@ -77,13 +78,14 @@ public class PlayerController : MonoBehaviour
 
     private float _coyoteTimeCounter;
     private float _jumpBufferCounter;
+    private bool  _isDead;
 
     // ── Squash & stretch animation ───────────────────────────
     private const float JumpSquashDuration = 0.12f;
-    private float   _squashTimer;   // > 0 while takeoff squash is playing
-    private float   _landTimer;     // > 0 while landing squash is playing
-    private bool    _wasGrounded;   // grounded state from previous frame
-    private float   _bobPhase;      // sin phase for walk bob
+    private float   _squashTimer;   
+    private float   _landTimer;     
+    private bool    _wasGrounded;   
+    private float   _bobPhase;      
 
     // ----------------------------------------------------------
     // Unity lifecycle
@@ -97,7 +99,7 @@ public class PlayerController : MonoBehaviour
     {
         _kb = Keyboard.current;
 
-        Position = spawnPosition;
+        Position = _gameManager.PlayerSpawnPosition;
 
         ColliderID = CollisionManager.Instance.RegisterCollider(
             Position, ColliderSize, true, EntityType.Player);
@@ -109,12 +111,19 @@ public class PlayerController : MonoBehaviour
     {
         _kb = Keyboard.current;
 
+        if (_gameManager.CurrentState == GameState.GameOver)
+        {
+            if (_isDead)
+            {
+                _velocity.y -= fallGravity * Time.deltaTime;
+                Position += new Vector3(0f, _velocity.y * Time.deltaTime, 0f);
+            }
+            return;
+        }
+
         if (_kb == null)                                    return;
         if (_gameManager.CurrentState != GameState.Playing) return;
 
-        // ── Coyote-time counter ──────────────────────────────
-        // While grounded, keep the counter full.
-        // The moment we leave the ground it counts down.
         if (IsGrounded)
             _coyoteTimeCounter = coyoteTime;
         else
@@ -148,7 +157,6 @@ public class PlayerController : MonoBehaviour
         else
             _jumpBufferCounter -= Time.deltaTime;
 
-        // ── Execute jump ────────────────────────────────────
         bool canJump = _jumpBufferCounter > 0f &&
                        (IsGrounded || _coyoteTimeCounter > 0f);
         if (canJump)
@@ -157,12 +165,9 @@ public class PlayerController : MonoBehaviour
             IsGrounded         = false;
             _coyoteTimeCounter = 0f;
             _jumpBufferCounter = 0f;
-            _squashTimer       = JumpSquashDuration;  // trigger takeoff squash
+            _squashTimer       = JumpSquashDuration;
         }
 
-        // ── Variable jump height: cut velocity on early release ─
-        // If the player releases jump while still rising, multiply
-        // the upward velocity down → short hop. Holding gives full arc.
         if (jumpReleased && _velocity.y > 0f)
             _velocity.y *= jumpCutMultiplier;
 
@@ -182,15 +187,12 @@ public class PlayerController : MonoBehaviour
         }
 
         float gravity;
-
-        // Apex hang time: near the top of the arc gravity is reduced
-        // so the jump feels weightless for a brief moment.
         if (Mathf.Abs(_velocity.y) < hangSpeedThreshold && _velocity.y > 0f)
             gravity = riseGravity * hangGravityMult;
         else if (_velocity.y > 0f)
             gravity = riseGravity;
         else
-            gravity = fallGravity;   // fast fall on the way down
+            gravity = fallGravity;
 
         _velocity.y -= gravity * Time.deltaTime;
     }
@@ -209,15 +211,12 @@ public class PlayerController : MonoBehaviour
 
         float targetSpeed = input * maxSpeed;
 
-        // Choose accel/decel rates based on whether we have input and
-        // whether the player is on the ground.
         float accelRate;
         if (IsGrounded)
             accelRate = Mathf.Abs(input) > 0.01f ? groundAcceleration : groundDeceleration;
         else
             accelRate = Mathf.Abs(input) > 0.01f ? airAcceleration    : airDeceleration;
 
-        // Smoothly move _velocity.x toward the target speed
         _velocity.x = Mathf.MoveTowards(_velocity.x, targetSpeed, accelRate * Time.deltaTime);
 
         float dx = _velocity.x * Time.deltaTime;
@@ -226,12 +225,56 @@ public class PlayerController : MonoBehaviour
         Vector3 newPos = Position + new Vector3(dx, 0f, 0f);
         if (CollisionManager.Instance.CheckCollision(ColliderID, newPos, out List<int> hitIds))
         {
-            _velocity.x = 0f;   // kill horizontal velocity on wall hit
+            bool hitSolid = false;
+            foreach (int id in hitIds)
+            {
+                EntityType type = CollisionManager.Instance.GetEntityType(id);
+                if (type == EntityType.Ground || type == EntityType.Obstacle || type == EntityType.InstakillObstacle)
+                {
+                    hitSolid = true;
+                }
+            }
+
             HandleCollisionResponse(hitIds, wasFalling: false);
+
+            if (hitSolid)
+            {
+                _velocity.x = 0f; 
+            }
+            else
+            {
+                Position = newPos; 
+            }
         }
         else
         {
             Position = newPos;
+        }
+
+        // ==========================================
+        // DYNAMIC BOUNDARIES
+        // ==========================================
+        if (useLevelBounds)
+        {
+            float dynamicMinX = _gameManager.PlayerSpawnPosition.x - 1.5f;
+
+            // Find the actual goal entity position so inspector stale values can't break this
+            float dynamicMaxX = _gameManager.GoalPosition.x + 1f;
+            foreach (var entity in GetComponent<EntityManager>().GetActiveEntities())
+            {
+                if (entity.type == EntityType.Goal)
+                {
+                    dynamicMaxX = entity.position.x + 1f;
+                    break;
+                }
+            }
+
+            float clampedX = Mathf.Clamp(Position.x, dynamicMinX, dynamicMaxX);
+            if (!Mathf.Approximately(Position.x, clampedX))
+            {
+                Position = new Vector3(clampedX, Position.y, Position.z);
+                _velocity.x = 0f;
+            }
         }
     }
 
@@ -245,18 +288,57 @@ public class PlayerController : MonoBehaviour
 
         if (CollisionManager.Instance.CheckCollision(ColliderID, newPos, out List<int> hitIds))
         {
-            // Capture falling state BEFORE velocity is zeroed - needed for stomp check
+            bool hitSolid = false;
+            foreach (int id in hitIds)
+            {
+                EntityType type = CollisionManager.Instance.GetEntityType(id);
+                if (type == EntityType.Ground || type == EntityType.Obstacle || type == EntityType.InstakillObstacle)
+                {
+                    hitSolid = true;
+                }
+            }
+
             bool wasFalling = _velocity.y < -0.5f;
 
-            if (_velocity.y < 0f) IsGrounded = true;
-            _velocity.y = 0f;
+            if (hitSolid)
+            {
+                if (_velocity.y < 0f) IsGrounded = true;
+                _velocity.y = 0f; 
+            }
+            else
+            {
+                Position = newPos; 
+            }
 
             HandleCollisionResponse(hitIds, wasFalling);
         }
         else
         {
-            Position   = newPos;
-            IsGrounded = false;
+            Position = newPos;
+
+            bool groundBelow = CollisionManager.Instance.CheckCollision(
+                ColliderID, 
+                Position + new Vector3(0f, -0.08f, 0f), 
+                out List<int> belowIds
+            );
+
+            bool solidBelow = false;
+            if (groundBelow)
+            {
+                foreach (int id in belowIds)
+                {
+                    EntityType type = CollisionManager.Instance.GetEntityType(id);
+                    if (type == EntityType.Ground || type == EntityType.Obstacle || type == EntityType.InstakillObstacle)
+                    {
+                        solidBelow = true;
+                    }
+                }
+            }
+
+            if (!solidBelow)
+            {
+                IsGrounded = false;
+            }
         }
     }
 
@@ -272,15 +354,13 @@ public class PlayerController : MonoBehaviour
             switch (type)
             {
                 case EntityType.Enemy:
-                    // Stomp: wasFalling is captured before velocity was zeroed,
-                    // so this is always accurate regardless of call order.
                     if (wasFalling)
                     {
                         GetComponent<EntityManager>().RemoveEntityByColliderID(hitId);
                         _velocity.y = jumpForce * 0.65f;
                         IsGrounded  = false;
                     }
-                    else if (_gameManager.IsInvincible)
+                    else if (_gameManager.IsPowerupInvincible)
                     {
                         GetComponent<EntityManager>().RemoveEntityByColliderID(hitId);
                     }
@@ -321,48 +401,34 @@ public class PlayerController : MonoBehaviour
     // ----------------------------------------------------------
     void UpdateVisualScale()
     {
-        // Detect landing: was airborne last frame, grounded this frame
-        if (!_wasGrounded && IsGrounded)
+        if (!_wasGrounded && IsGrounded && _landTimer <= 0f)
             _landTimer = 0.18f;
 
-        // Tick timers (squashTimer kept for future use but not used for Y-squish)
         _squashTimer -= Time.deltaTime;
         _landTimer   -= Time.deltaTime;
 
-        // ── Priority order ─────────────────────────────────────
-        // IMPORTANT: Y must never go below 1 — any Y < 1 makes the player
-        // appear to float above the ground because the quad is centered.
-        // Only X-axis animations are used for grounded states.
-
         if (!IsGrounded && _velocity.y > 1f)
         {
-            // Rising: tall and thin
             VisualScale = Vector3.Lerp(VisualScale, new Vector3(0.75f, 1.30f, 1f), Time.deltaTime * 20f);
         }
         else if (!IsGrounded && _velocity.y < -1f)
         {
-            // Falling: slightly stretched downward
             VisualScale = Vector3.Lerp(VisualScale, new Vector3(0.85f, 1.15f, 1f), Time.deltaTime * 20f);
         }
         else if (_landTimer > 0f)
         {
-            // Landing squash: only widen X — Y is always exactly 1
-            // so the bottom edge stays flush with the ground.
             float n  = _landTimer / 0.18f;
             float tx = Mathf.Lerp(1f, 1.40f, n);
             VisualScale = new Vector3(tx, 1f, 1f);
         }
         else if (IsGrounded && Mathf.Abs(_velocity.x) > 0.5f)
         {
-            // Walk pulse: X oscillates 1.0 → 1.05 → 1.0, Y locked at 1.
             _bobPhase += Time.deltaTime * Mathf.Abs(_velocity.x) * 7f;
             float pulse = (Mathf.Sin(_bobPhase) * 0.5f + 0.5f) * 0.05f;
             VisualScale = new Vector3(1f + pulse, 1f, 1f);
         }
         else
         {
-            // Idle / base: hard-assign exact (1,1,1) every frame —
-            // no lerp, no drift, guaranteed clean square like the enemies.
             VisualScale = Vector3.one;
             _bobPhase   = 0f;
         }
@@ -379,12 +445,22 @@ public class PlayerController : MonoBehaviour
         CollisionManager.Instance.UpdateMatrix(ColliderID, m);
     }
 
-    // ----------------------------------------------------------
-    // Called by GameManager on respawn (hard reset to spawn point)
-    // ----------------------------------------------------------
+    public void TriggerDeathAnimation()
+    {
+        _isDead = true;
+        _velocity = new Vector3(0f, jumpForce * 0.8f, 0f);
+        
+        if (ColliderID != -1)
+        {
+            CollisionManager.Instance.RemoveCollider(ColliderID);
+            ColliderID = -1;
+        }
+    }
+
     public void Respawn()
     {
-        Position           = spawnPosition;
+        _isDead            = false;
+        Position           = _gameManager.PlayerSpawnPosition;
         _velocity          = Vector3.zero;
         IsGrounded         = false;
         _coyoteTimeCounter = 0f;
@@ -393,6 +469,13 @@ public class PlayerController : MonoBehaviour
         _landTimer         = 0f;
         _bobPhase          = 0f;
         VisualScale        = Vector3.one;
+        
+        if (ColliderID == -1)
+        {
+            ColliderID = CollisionManager.Instance.RegisterCollider(
+                Position, ColliderSize, true, EntityType.Player);
+        }
+        
         SyncCollider();
     }
 }

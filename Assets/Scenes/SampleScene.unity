@@ -156,8 +156,8 @@ Camera:
   m_GameObject: {fileID: 330585543}
   m_Enabled: 1
   serializedVersion: 2
-  m_ClearFlags: 1
-  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
+  m_ClearFlags: 2
+  m_BackGroundColor: {r: 0.18867922, g: 0.18867922, b: 0.18867922, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
   m_FOVAxisMode: 0
@@ -437,15 +437,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1353b8df3a488314fb95cca888bdde47, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerController
-  movementSpeed: 6
+  maxSpeed: 10
+  groundAcceleration: 90
+  groundDeceleration: 75
+  airAcceleration: 45
+  airDeceleration: 20
   jumpForce: 20
+  jumpCutMultiplier: 0.45
   riseGravity: 35
   fallGravity: 75
+  hangGravityMult: 0.35
+  hangSpeedThreshold: 3.5
   coyoteTime: 0.15
   jumpBufferTime: 0.12
   playerWidth: 1
   playerHeight: 1
   playerDepth: 0.5
+  useLevelBounds: 1
+  minXBound: -2
+  maxXBound: 200
   spawnPosition: {x: 0, y: 0, z: 0}
 --- !u!114 &515298776
 MonoBehaviour:
@@ -475,8 +485,8 @@ MonoBehaviour:
   cullingMargin: 3
   uiDepthOffset: 0.5
   uiScale: 0.5
-  hpIconSize: 0.4
-  hpIconPadding: 0.08
+  hpIconSize: 0.75
+  hpIconPadding: 0.2
 --- !u!114 &515298777
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -489,11 +499,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9448d682fdf0b25429b9d9f709fb1a17, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GameManager
-  maxHP: 3
   startingLives: 3
   levelTime: 120
   invincibilityDuration: 5
   damageInvincibilityTime: 1.5
+  fireballCooldown: 0.35
 --- !u!114 &515298778
 MonoBehaviour:
   m_ObjectHideFlags: 0

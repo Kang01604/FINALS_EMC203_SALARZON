@@ -103,7 +103,7 @@ public class EntityManager : MonoBehaviour
         SpawnPickup(new Vector3(20f,  2f, 0f), EntityType.InvincibilityPickup);
 
         // ---- GOAL (end of level) ----
-        SpawnGoal(new Vector3(42f, -3f, 0f));
+        SpawnGoal(new Vector3(60f, -3f, 0f));
     }
 
     // ----------------------------------------------------------
